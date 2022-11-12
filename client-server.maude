@@ -1,0 +1,80 @@
+mod CLIENT-SERVER is
+    protecting NAT .
+    extending CONFIGURATION .
+
+    ops Client Server Attacker : -> Cid [ctor] .
+    ops C_ S_ A_ : Nat -> Oid [ctor] .
+    --- op (_,_) : MsgCnts MsgCnts -> MsgCnts [ctor] .
+    --- op data : -> MsgCnts [ctor] .
+    op (to_,_from_) : Oid AttributeSet Oid -> Msg [ctor msg] .
+
+    --- Attributes for client.
+    op server:_ : Oid -> Attribute [ctor gather (&)] .
+    ops seq:_ ack:_ maxSeq:_ : Nat -> Attribute [ctor gather (&)] .
+    op msgSeq:_ : Nat -> Attribute [ctor gather (&)] .
+
+    vars ID1 ID2 : Oid .
+    var ATTRS1 : AttributeSet .
+    vars N1 N2 N3 : Nat .
+
+    crl [client-send] : < ID1 : Client | server: ID2, seq: N1, ack: N1, maxSeq: N2 > => (to ID2, (msgSeq: N1) from ID1) < ID1 : Client | server: ID2, seq: N1 + 1, ack: N1, maxSeq: N2 > 
+        if N1 < N2 .
+    rl [client-rcv] : (to ID1, (msgSeq: N1) from ID2) < ID1 : Client | server: ID2, seq: N2, ack: N3, ATTRS1 > => *** Only takes the message if it is the next one, drops it otherwise.
+        if N1 == N3 then 
+            < ID1 : Client | server: ID2, seq: N2, ack: N3 + 1, ATTRS1 > 
+        else 
+            < ID1 : Client | server: ID2, seq: N2, ack: N3, ATTRS1 > 
+        fi .
+
+    rl [server-reply] : (to ID1, ATTRS1 from ID2) < ID1 : Server | none > => (to ID2, ATTRS1 from ID1) < ID1 : Server | none > .
+endm
+
+--- < C 1 : Client | server: S 1,seq: 1,ack: 0,maxSeq: 3 > < S 1 : Server | none > to S 1,msgSeq: 0 from C 1
+
+--- mod COOKIE-WRAPPER is
+---     protecting CLIENT-SERVER .
+
+---     sorts CookieAttributeSet CookieAttribute .
+---     subsort CookieAttributeSet < AttributeSet .
+---     subsort CookieAttribute < Attribute .
+
+---     op seed:_ : Nat -> CookieAttribute [ctor gather (&)] .
+
+---     --- Attributes for messages.
+---     op cookie:_ : Nat -> CookieAttribute [ctor gather (&)] .
+--- endm
+
+--- mod CLIENT-SERVER is
+---     protecting NAT .
+
+---     sorts Configuration MsgCnts CId SId Id Msg .
+---     sorts CIntState SIntState CConf SConf .
+---     subsort Msg CConf SConf < Configuration .
+---     subsort Id < MsgCnts .
+---     subsorts CId SId < Id .
+---     --- subsort Attribute < AttributeSet .
+
+---     op none : -> Configuration [ctor] .
+---     op __ : Configuration Configuration -> Configuration [ctor config assoc comm id: none] .
+---     op (_,_) : MsgCnts MsgCnts -> MsgCnts [ctor] .
+---     op data : -> MsgCnts [ctor] .
+---     msg (to_,_from_) : Id MsgCnts Id -> Msg [ctor] .
+---     op C<_,_> : CId CIntState -> CConf [ctor] .
+---     op S<_,_> : SId SIntState -> SConf [ctor] .
+---     op !Seq:_, Retry:_, SeqLen:_! : Nat Nat Nat -> CIntState [ctor] . 
+---     op !! : -> SIntState [ctor] .
+---     --- op !Seq:_, Retry:_! : Nat Nat -> SIntState [ctor] . 
+
+---     vars m1 m2 : MsgCnts . vars C1 C2 : CId . vars S1 S2 : SId . vars ID1 ID2 : Id .
+---     vars mgs1 msg2 : Msg . var X : CConf . var Y : SConf .
+---     vars N1 N2 N3 : Nat .
+
+---     rl C< C1 , !Seq: N1, Retry: N1, SeqLen: N3! > => (to)
+--- endm
+
+--- frewrite < C 1 : Client | server: S 1, seq: 0, ack: 0 > .
+
+set trace on .
+--- set trace eq off .
+frewrite < C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 3 > < S 1 : Server | none > .
+--- frewrite < C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 1 > < C 2 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 4 > < S 1 : Server | none > .
