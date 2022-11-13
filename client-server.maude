@@ -2,47 +2,88 @@ mod CLIENT-SERVER is
     protecting NAT .
     extending CONFIGURATION .
 
+    sorts ClientId ServerId ClientConf ServerConf ClientObj ServerObj .
+    subsorts ClientId ServerId < Oid .
+    subsorts ClientConf ServerConf < Configuration .
+    subsort ClientObj < ClientConf .
+    subsort ServerObj < ServerConf .
+    subsort Msg < ClientConf .
+    subsort Msg < ServerConf .
+
     ops Client Server Attacker : -> Cid [ctor] .
-    ops C_ S_ A_ : Nat -> Oid [ctor] .
-    --- op (_,_) : MsgCnts MsgCnts -> MsgCnts [ctor] .
-    --- op data : -> MsgCnts [ctor] .
+    --- ops C_ S_ A_ : Nat -> Oid [ctor] .
+    op C_ : Nat -> ClientId [ctor] .
+    op S_ : Nat -> ServerId [ctor] .
     op (to_,_from_) : Oid AttributeSet Oid -> Msg [ctor msg] .
 
     --- Attributes for client.
-    op server:_ : Oid -> Attribute [ctor gather (&)] .
+    op server:_ : ServerId -> Attribute [ctor gather (&)] .
     ops seq:_ ack:_ maxSeq:_ : Nat -> Attribute [ctor gather (&)] .
     op msgSeq:_ : Nat -> Attribute [ctor gather (&)] .
 
-    vars ID1 ID2 : Oid .
+    op C<_:_|_> : ClientId Cid AttributeSet -> ClientObj [ctor object] .
+    op S<_:_|_> : ServerId Cid AttributeSet -> ServerObj [ctor object] .
+    op cnone : -> ClientConf [ctor] .
+    op snone : -> ServerConf [ctor] .
+    op _c;_ : ClientConf ClientConf -> ClientConf [ctor config assoc comm id: cnone] .
+    op _s;_ : ServerConf ServerConf -> ServerConf [ctor config assoc comm id: snone] .
+
+    var CLIENTID1 : ClientId .
+    var SERVERID1 : ServerId .
     var ATTRS1 : AttributeSet .
     vars N1 N2 N3 : Nat .
 
-    crl [client-send] : < ID1 : Client | server: ID2, seq: N1, ack: N1, maxSeq: N2 > => (to ID2, (msgSeq: N1) from ID1) < ID1 : Client | server: ID2, seq: N1 + 1, ack: N1, maxSeq: N2 > 
-        if N1 < N2 .
-    rl [client-rcv] : (to ID1, (msgSeq: N1) from ID2) < ID1 : Client | server: ID2, seq: N2, ack: N3, ATTRS1 > => *** Only takes the message if it is the next one, drops it otherwise.
+    crl [client-send] : C< CLIENTID1 : Client | server: SERVERID1, seq: N1, ack: N1, maxSeq: N2 > => 
+        (to SERVERID1, (msgSeq: N1) from CLIENTID1) c; C< CLIENTID1 : Client | server: SERVERID1, seq: N1 + 1, ack: N1, maxSeq: N2 > if N1 < N2 .
+    rl [client-rcv] : (to CLIENTID1, (msgSeq: N1) from SERVERID1) c; C< CLIENTID1 : Client | server: SERVERID1, seq: N2, ack: N3, ATTRS1 > => *** Only takes the message if it is the next one, drops it otherwise.
         if N1 == N3 then 
-            < ID1 : Client | server: ID2, seq: N2, ack: N3 + 1, ATTRS1 > 
+            C< CLIENTID1 : Client | server: SERVERID1, seq: N2, ack: N3 + 1, ATTRS1 > 
         else 
-            < ID1 : Client | server: ID2, seq: N2, ack: N3, ATTRS1 > 
+            C< CLIENTID1 : Client | server: SERVERID1, seq: N2, ack: N3, ATTRS1 > 
         fi .
 
-    rl [server-reply] : (to ID1, ATTRS1 from ID2) < ID1 : Server | none > => (to ID2, ATTRS1 from ID1) < ID1 : Server | none > .
+    rl [server-reply] : (to SERVERID1, ATTRS1 from CLIENTID1) s; S< SERVERID1 : Server | none > => (to CLIENTID1, ATTRS1 from SERVERID1) s; S< SERVERID1 : Server | none > .
 endm
 
---- < C 1 : Client | server: S 1,seq: 1,ack: 0,maxSeq: 3 > < S 1 : Server | none > to S 1,msgSeq: 0 from C 1
+mod COOKIE-WRAPPER is
+    protecting CLIENT-SERVER .
 
---- mod COOKIE-WRAPPER is
----     protecting CLIENT-SERVER .
+    sorts CStoredCookiePair Cookie WrappedClientId WrappedServerId .
+    subsorts WrappedClientId WrappedServerId < Oid .
+    --- sorts WrappedClient WrappedServer .
+    --- subsorts WrappedClient WrappedServer < Object .
+    subsort Cookie < Nat .
 
----     sorts CookieAttributeSet CookieAttribute .
----     subsort CookieAttributeSet < AttributeSet .
----     subsort CookieAttribute < Attribute .
+    ops WrappedClient WrappedServer : -> Cid [ctor] .
+    op wrapClientId : ClientId -> WrappedClientId .
+    op wrapServerId : ServerId -> WrappedServerId .
+    op (_,_) : ServerId Cookie -> CStoredCookiePair [ctor] .
+    op cookieNone : -> CStoredCookiePair [ctor] .
+    op seed:_ : Nat -> Attribute [ctor gather (&)] .
+    op seed:_ : Nat -> Attribute [ctor gather (&)] .
+    op cookie:_ : CStoredCookiePair -> Attribute [ctor gather (&)] .
+    --- Extra message stuff.
+    op (to_,connect from_) : WrappedServerId WrappedClientId -> Msg [ctor msg] .
+    op msgCookie:_ : Cookie -> Attribute [ctor gather (&)] .
+    op clientConf:_ : Configuration -> Attribute [ctor gather (&)] .
 
----     op seed:_ : Nat -> CookieAttribute [ctor gather (&)] .
+    var CLIENTID1 : ClientId .
+    var SERVERID1 : ServerId .
+    var WRAPPEDCLIENTID1 : WrappedClientId .
+    var WRAPPEDSERVERID1 : WrappedServerId .
+    var CCONF1 : ClientConf .
+    var SCONF1 : ServerConf .
+    var K : Cookie .
+    var MSG1 : Msg .
+    vars ATTRS1 ATTRS2 : AttributeSet .
+    vars N1 N2 N3 : Nat .
 
----     --- Attributes for messages.
----     op cookie:_ : Nat -> CookieAttribute [ctor gather (&)] .
---- endm
+
+    rl [client-connect-req] : < wrapClientId(CLIENTID1) : WrappedClient | cookie: cookieNone, clientConf: (CCONF1 c; (to SERVERID1, ATTRS2 from CLIENTID1)), ATTRS1 > => 
+        (to wrapServerId(SERVERID1), connect from wrapClientId(CLIENTID1)) < CLIENTID1 : WrappedClient | cookie: cookieNone, clientConf: CCONF1, ATTRS1 > .
+    --- rl [client-connect-req] < CLIENTID1 : WrappedClient | cookie: (SERVERID1, K), clientConf: CCONF1 c; (to SERVERID1, (msgSeq: N1) from CLIENTID1) > =>
+        ---  .
+endm
 
 --- mod CLIENT-SERVER is
 ---     protecting NAT .
@@ -74,7 +115,9 @@ endm
 
 --- frewrite < C 1 : Client | server: S 1, seq: 0, ack: 0 > .
 
-set trace on .
+--- set trace on .
 --- set trace eq off .
-frewrite < C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 3 > < S 1 : Server | none > .
+--- frewrite < C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 3 > < S 1 : Server | none > .
 --- frewrite < C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 1 > < C 2 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 4 > < S 1 : Server | none > .
+
+frewrite < wrapClientId(C 1) : WrappedClient | cookie: cookieNone, clientConf: C< C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 3 > > .
