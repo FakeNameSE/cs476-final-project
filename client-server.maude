@@ -59,8 +59,11 @@ mod COOKIE-WRAPPER is
     op wrapServerId : ServerId -> WrappedServerId .
     op (_,_) : ServerId Cookie -> CStoredCookiePair [ctor] .
     op cookieNone : -> CStoredCookiePair [ctor] .
+    op msgNone : -> Msg [ctor] . *** Does this incorrectly get treated as a real message to deliver?
+    op natToCookie : Nat -> Cookie [ctor] .
+
     op seed:_ : Nat -> Attribute [ctor gather (&)] .
-    op seed:_ : Nat -> Attribute [ctor gather (&)] .
+    op pendingMsg:_ : Msg -> Attribute [ctor gather (&)] .
     op cookie:_ : CStoredCookiePair -> Attribute [ctor gather (&)] .
     --- Extra message stuff.
     op (to_,connect from_) : WrappedServerId WrappedClientId -> Msg [ctor msg] .
@@ -74,50 +77,24 @@ mod COOKIE-WRAPPER is
     var CCONF1 : ClientConf .
     var SCONF1 : ServerConf .
     var K : Cookie .
-    var MSG1 : Msg .
     vars ATTRS1 ATTRS2 : AttributeSet .
     vars N1 N2 N3 : Nat .
 
-
-    rl [client-connect-req] : < wrapClientId(CLIENTID1) : WrappedClient | cookie: cookieNone, clientConf: (CCONF1 c; (to SERVERID1, ATTRS2 from CLIENTID1)), ATTRS1 > => 
-        (to wrapServerId(SERVERID1), connect from wrapClientId(CLIENTID1)) < CLIENTID1 : WrappedClient | cookie: cookieNone, clientConf: CCONF1, ATTRS1 > .
-    --- rl [client-connect-req] < CLIENTID1 : WrappedClient | cookie: (SERVERID1, K), clientConf: CCONF1 c; (to SERVERID1, (msgSeq: N1) from CLIENTID1) > =>
-        ---  .
+    rl [client-connect-req] : < wrapClientId(CLIENTID1) : WrappedClient | cookie: cookieNone, clientConf: (CCONF1 c; (to SERVERID1, ATTRS2 from CLIENTID1)), ATTRS1 > =>
+        (to wrapServerId(SERVERID1), connect from wrapClientId(CLIENTID1)) < CLIENTID1 : WrappedClient | cookie: cookieNone, clientConf: CCONF1, pendingMsg: (to SERVERID1, ATTRS2 from CLIENTID1), ATTRS1 > .
+    
+    rl [client-send-data-req] : < wrapClientId(CLIENTID1) : WrappedClient | cookie: (SERVERID1, K), clientConf: (CCONF1 c; (to SERVERID1, ATTRS2 from CLIENTID1)), ATTRS1 > =>
+        (to wrapServerId(SERVERID1), (ATTRS2, msgCookie: K) from wrapClientId(CLIENTID1)) < CLIENTID1 : WrappedClient | cookie: (SERVERID1, K), clientConf: CCONF1, pendingMsg: (to SERVERID1, ATTRS2 from CLIENTID1), ATTRS1 > .
 endm
-
---- mod CLIENT-SERVER is
----     protecting NAT .
-
----     sorts Configuration MsgCnts CId SId Id Msg .
----     sorts CIntState SIntState CConf SConf .
----     subsort Msg CConf SConf < Configuration .
----     subsort Id < MsgCnts .
----     subsorts CId SId < Id .
----     --- subsort Attribute < AttributeSet .
-
----     op none : -> Configuration [ctor] .
----     op __ : Configuration Configuration -> Configuration [ctor config assoc comm id: none] .
----     op (_,_) : MsgCnts MsgCnts -> MsgCnts [ctor] .
----     op data : -> MsgCnts [ctor] .
----     msg (to_,_from_) : Id MsgCnts Id -> Msg [ctor] .
----     op C<_,_> : CId CIntState -> CConf [ctor] .
----     op S<_,_> : SId SIntState -> SConf [ctor] .
----     op !Seq:_, Retry:_, SeqLen:_! : Nat Nat Nat -> CIntState [ctor] . 
----     op !! : -> SIntState [ctor] .
----     --- op !Seq:_, Retry:_! : Nat Nat -> SIntState [ctor] . 
-
----     vars m1 m2 : MsgCnts . vars C1 C2 : CId . vars S1 S2 : SId . vars ID1 ID2 : Id .
----     vars mgs1 msg2 : Msg . var X : CConf . var Y : SConf .
----     vars N1 N2 N3 : Nat .
-
----     rl C< C1 , !Seq: N1, Retry: N1, SeqLen: N3! > => (to)
---- endm
-
---- frewrite < C 1 : Client | server: S 1, seq: 0, ack: 0 > .
 
 --- set trace on .
 --- set trace eq off .
 --- frewrite < C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 3 > < S 1 : Server | none > .
 --- frewrite < C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 1 > < C 2 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 4 > < S 1 : Server | none > .
 
-frewrite < wrapClientId(C 1) : WrappedClient | cookie: cookieNone, clientConf: C< C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 3 > > .
+--- frewrite < wrapClientId(C 1) : WrappedClient | cookie: cookieNone, clientConf: C< C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 3 > > .
+frewrite < wrapClientId(C 1) : WrappedClient | cookie: (S 1, natToCookie(5)), clientConf: C< C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 3 > > .
+
+--- TODO:
+--- Is there a better way to produce cookies?
+--- Does msgNone incorrectly get treated as a real message to deliver (see comment)?
