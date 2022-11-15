@@ -53,6 +53,8 @@ mod COOKIE-WRAPPER is
     protecting CLIENT-SERVER .
 
     sorts CStoredCookiePair Cookie WrappedClientId WrappedServerId .
+    sorts NeList List ServerCookieElem .
+    subsort ServerCookieElem < NeList < List .
     subsorts WrappedClientId WrappedServerId < Oid .
     --- sorts WrappedClient WrappedServer .
     --- subsorts WrappedClient WrappedServer < Object .
@@ -77,6 +79,14 @@ mod COOKIE-WRAPPER is
     op msgCookie:_ : Cookie -> Attribute [ctor gather (&)] .
     op clientConf:_ : Configuration -> Attribute [ctor gather (&)] .
 
+    --- Server side list of cookies.
+    op nil : -> List [ctor] . 
+    op _._ : ServerCookieElem List -> NeList [ctor assoc] .
+    op len : List -> Nat .
+    op (_,_,_) : WrappedClientId Cookie Nat -> ServerCookieElem .
+    op sortedInsert : ServerCookieElem List -> NeList .
+    op extractWeight : ServerCookieElem -> Nat .
+
     var CLIENTID1 : ClientId .
     var SERVERID1 : ServerId .
     var WRAPPEDCLIENTID1 : WrappedClientId .
@@ -87,6 +97,17 @@ mod COOKIE-WRAPPER is
     var MSG1 : Msg .
     vars ATTRS1 ATTRS2 : AttributeSet .
     vars N1 N2 N3 : Nat .
+    vars L Q : NeList .
+    vars E1 E2 : ServerCookieElem .
+
+    eq extractWeight((WRAPPEDCLIENTID1, K, N1)) = N1 .
+
+    eq E1 . nil = E1 .
+    eq len(nil) = 0 .
+    eq len(E1 . L) = s(len(L)) .
+    eq sortedInsert(E1, nil) = E1 .
+    --- Assumes the list is already sorted.
+    eq sortedInsert(E1, E2 . L) = if extractWeight(E1) < extractWeight(E2) then E1 . E2 . L else E2 . sortedInsert(E1, L) fi .
 
     rl [client-send-new-connect] : < wrapClientId(CLIENTID1) : WrappedClient | cookie: cookieNone, clientConf: (CCONF1 c; (to SERVERID1, ATTRS2 from CLIENTID1)), pendingMsg: msgNone, ATTRS1 > =>
         (to wrapServerId(SERVERID1), connect from wrapClientId(CLIENTID1)) < CLIENTID1 : WrappedClient | cookie: cookieNone, clientConf: CCONF1, 
@@ -111,8 +132,9 @@ mod COOKIE-WRAPPER is
     --- This rule needs to send another cookie request and set sendMsg: True.
     --- rl [client-timeout-req] :
 
+    --- Popping from the front of our sorted list is getting the element with the lowest weight.
     --- rl [server-rcv-connect-req] :
-    --- rl [server-rcv-data-req] :
+    --- rl [server-rcv-data-req] : 
     --- rl [server-rcv-finish-req] :
 endm
 
