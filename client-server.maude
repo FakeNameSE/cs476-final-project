@@ -73,6 +73,8 @@ mod COOKIE-WRAPPER is
     op cookie:_ : CStoredCookiePair -> Attribute [ctor gather (&)] .
     op sendMsg:_ : Bool -> Attribute [ctor gather (&)] . *** Flag for client to send message once it has cookie.
 
+    op storedCookies:_ : List -> Attribute [ctor gather (&)] .
+
     --- Extra message stuff.
     op (to_,connect from_) : WrappedServerId WrappedClientId -> Msg [ctor msg] .
     op (to_,accept with _ from_) : WrappedClientId Cookie WrappedServerId -> Msg [ctor msg] .
@@ -81,23 +83,26 @@ mod COOKIE-WRAPPER is
 
     --- Server side list of cookies.
     op nil : -> List [ctor] . 
-    op _._ : ServerCookieElem List -> NeList [ctor assoc] .
+    op _._ : ServerCookieElem List -> NeList [ctor] .
     op len : List -> Nat .
     op (_,_,_) : WrappedClientId Cookie Nat -> ServerCookieElem .
     op sortedInsert : ServerCookieElem List -> NeList .
     op extractWeight : ServerCookieElem -> Nat .
+    op _ _ in _ : WrappedClientId Cookie List -> Bool .
+    op incWeight : WrappedClientId Cookie List -> List .
 
     var CLIENTID1 : ClientId .
     var SERVERID1 : ServerId .
-    var WRAPPEDCLIENTID1 : WrappedClientId .
+    var WRAPPEDCLIENTID1 WRAPPEDCLIENTID2 : WrappedClientId .
     var WRAPPEDSERVERID1 : WrappedServerId .
     var CCONF1 : ClientConf .
     var SCONF1 : ServerConf .
-    var K : Cookie .
+    vars K K1 : Cookie .
     var MSG1 : Msg .
     vars ATTRS1 ATTRS2 : AttributeSet .
     vars N1 N2 N3 : Nat .
-    vars L Q : NeList .
+    var L : NeList .
+    var COOKIELIST : List .
     vars E1 E2 : ServerCookieElem .
 
     eq extractWeight((WRAPPEDCLIENTID1, K, N1)) = N1 .
@@ -108,33 +113,38 @@ mod COOKIE-WRAPPER is
     eq sortedInsert(E1, nil) = E1 .
     --- Assumes the list is already sorted.
     eq sortedInsert(E1, E2 . L) = if extractWeight(E1) < extractWeight(E2) then E1 . E2 . L else E2 . sortedInsert(E1, L) fi .
+    eq WRAPPEDCLIENTID1 K in nil = false .
+    eq WRAPPEDCLIENTID1 K in (WRAPPEDCLIENTID2, K1, N1) . L = if (WRAPPEDCLIENTID1 == WRAPPEDCLIENTID2) and (K == K1) then true else WRAPPEDCLIENTID1 K in L fi .
+
+    eq incWeight(WRAPPEDCLIENTID1, K, nil) = nil .
+    eq incWeight(WRAPPEDCLIENTID1, K, (WRAPPEDCLIENTID2, K1, N1) . L) = if (WRAPPEDCLIENTID1 == WRAPPEDCLIENTID2) and (K == K1) then (WRAPPEDCLIENTID2, K1, s(N1)) . L else (WRAPPEDCLIENTID2, K1, N1) . incWeight(WRAPPEDCLIENTID1, K, L) fi .
 
     rl [client-send-new-connect] : < wrapClientId(CLIENTID1) : WrappedClient | cookie: cookieNone, clientConf: (CCONF1 c; (to SERVERID1, ATTRS2 from CLIENTID1)), pendingMsg: msgNone, ATTRS1 > =>
-        (to wrapServerId(SERVERID1), connect from wrapClientId(CLIENTID1)) < CLIENTID1 : WrappedClient | cookie: cookieNone, clientConf: CCONF1, 
-        pendingMsg: (to SERVERID1, ATTRS2 from CLIENTID1), sendMsg: true, ATTRS1 > .
+        (to wrapServerId(SERVERID1), connect from wrapClientId(CLIENTID1)) 
+        < wrapClientId(CLIENTID1) : WrappedClient | cookie: cookieNone, clientConf: CCONF1, pendingMsg: (to SERVERID1, ATTRS2 from CLIENTID1), sendMsg: true, ATTRS1 > .
 
     rl [client-rcv-connect] : (to wrapClientId(CLIENTID1), accept with K from wrapServerId(SERVERID1)) < CLIENTID1 : WrappedClient | ATTRS1 > =>
-        < CLIENTID1 : WrappedClient | cookie: (SERVERID1, K), ATTRS1 > .
+        < wrapClientId(CLIENTID1) : WrappedClient | cookie: (SERVERID1, K), ATTRS1 > .
 
     rl [client-send-new-data] : < wrapClientId(CLIENTID1) : WrappedClient | cookie: (SERVERID1, K), clientConf: (CCONF1 c; (to SERVERID1, ATTRS2 from CLIENTID1)), pendingMsg: msgNone, ATTRS1 > =>
         (to wrapServerId(SERVERID1), (ATTRS2, msgCookie: K) from wrapClientId(CLIENTID1)) 
-        < CLIENTID1 : WrappedClient | cookie: (SERVERID1, K), clientConf: CCONF1, pendingMsg: (to SERVERID1, ATTRS2 from CLIENTID1), sendMsg: false, ATTRS1 > .
+        < wrapClientId(CLIENTID1) : WrappedClient | cookie: (SERVERID1, K), clientConf: CCONF1, pendingMsg: (to SERVERID1, ATTRS2 from CLIENTID1), sendMsg: false, ATTRS1 > .
 
     rl [client-send-pending-data] : < wrapClientId(CLIENTID1) : WrappedClient | cookie: (SERVERID1, K), pendingMsg: (to SERVERID1, ATTRS2 from CLIENTID1), sendMsg: true, ATTRS1 > =>
         (to wrapServerId(SERVERID1), (ATTRS2, msgCookie: K) from wrapClientId(CLIENTID1)) 
-        < CLIENTID1 : WrappedClient | cookie: (SERVERID1, K), pendingMsg: (to SERVERID1, ATTRS2 from CLIENTID1), sendMsg: false, ATTRS1 > .
+        < wrapClientId(CLIENTID1) : WrappedClient | cookie: (SERVERID1, K), pendingMsg: (to SERVERID1, ATTRS2 from CLIENTID1), sendMsg: false, ATTRS1 > .
 
     --- Passes any message to the internal client (does not filter old ones) but clears pendingMsg if this is a response with the awaited sequence number.
-    rl [client-rcv-data] : (to wrapClientId(CLIENTID1), (msgSeq: N1, ATTRS2) from wrapServerId(SERVERID1)) < CLIENTID1 : WrappedClient | clientConf: CCONF1, pendingMsg: MSG1, ATTRS1 > => 
-        < CLIENTID1 : WrappedClient | clientConf: ((to CLIENTID1, (msgSeq: N1, ATTRS2) from SERVERID1) c; CCONF1), 
+    rl [client-rcv-data] : (to wrapClientId(CLIENTID1), (msgSeq: N1, ATTRS2) from wrapServerId(SERVERID1)) < wrapClientId(CLIENTID1) : WrappedClient | clientConf: CCONF1, pendingMsg: MSG1, ATTRS1 > => 
+        < wrapClientId(CLIENTID1) : WrappedClient | clientConf: ((to CLIENTID1, (msgSeq: N1, ATTRS2) from SERVERID1) c; CCONF1), 
         pendingMsg: (if (MSG1 == (to SERVERID1, (msgSeq: N1, ATTRS2) from CLIENTID1)) then msgNone else MSG1 fi), ATTRS1 > .
 
     --- This rule needs to send another cookie request and set sendMsg: True.
     --- rl [client-timeout-req] :
 
     --- Popping from the front of our sorted list is getting the element with the lowest weight.
-    --- rl [server-rcv-connect-req] :
-    --- rl [server-rcv-data-req] : 
+    --- rl [server-rcv-connect-req] :  .
+    rl [server-rcv-data-req] : (to wrapServerId(SERVERID1), (msgCookie: K, ATTRS2) from wrapClientId(CLIENTID1)) < wrapServerId(SERVERID1) : WrappedServer | storedCookies: COOKIELIST, ServerConf: SCONF1, ATTRS1 > =>
     --- rl [server-rcv-finish-req] :
 endm
 
