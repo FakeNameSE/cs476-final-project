@@ -206,8 +206,20 @@ endm
 --- frewrite < wrapClientId(C 1) : WrappedClient | cookie: cookieNone, clientConf: C< C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 3 > > .
 --- frewrite < wrapClientId(C 1) : WrappedClient | cookie: (S 1, natToCookie(5)), clientConf: C< C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 3 > > .
 
+--- Test one client, one server.
 frewrite < wrapClientId(C 1) : WrappedClient | cookie: cookieNone, pendingMsg: msgNone, sendMsg: false, clientConf: C< C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 3 > > 
 < wrapServerId(S 1) : WrappedServer | storedCookies: nil, maxCookies: 1, seed: 42, serverConf: S< S 1 : Server | none > > .
+
+--- Test two clients, one server, enough cookies for both.
+frewrite < wrapClientId(C 1) : WrappedClient | cookie: cookieNone, pendingMsg: msgNone, sendMsg: false, clientConf: C< C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 3 > > 
+    < wrapClientId(C 2) : WrappedClient | cookie: cookieNone, pendingMsg: msgNone, sendMsg: false, clientConf: C< C 2 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 10 > > 
+    < wrapServerId(S 1) : WrappedServer | storedCookies: nil, maxCookies: 2, seed: 42, serverConf: S< S 1 : Server | none > > .
+
+--- Verify that no weird end states occur for one client and one server.
+search < wrapClientId(C 1) : WrappedClient | cookie: cookieNone, pendingMsg: msgNone, sendMsg: false, clientConf: C< C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 3 > > 
+    < wrapServerId(S 1) : WrappedServer | storedCookies: nil, maxCookies: 1, seed: 42, serverConf: S< S 1 : Server | none > >
+        =>! < wrapClientId(C 1) : WrappedClient | cookie: CLIENTCOOKIEPAIR, pendingMsg: MSG1, clientConf: C< C 1 : Client | server: S 1, seq: N1, ack: N2, ATTRS1 > > C:Configuration 
+            s.t. (MSG1 =/= msgNone) or (N1 =/= 4) or (N2 =/= 4) or (CLIENTCOOKIEPAIR =/= cookieNone) .
 
 --- TODO:
 --- Is there a better way to produce cookies?
