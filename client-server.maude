@@ -78,6 +78,7 @@ mod COOKIE-WRAPPER is
     op pendingMsg:_ : Msg -> Attribute [ctor gather (&)] .
     op cookie:_ : CStoredCookiePair -> Attribute [ctor gather (&)] .
     op sendMsg:_ : Bool -> Attribute [ctor gather (&)] . *** Flag for client to send message once it has cookie.
+    op setTimeout:_ : Bool -> Attribute [ctor gather (&)] .
 
     op storedCookies:_ : List -> Attribute [ctor gather (&)] .
     op maxCookies:_ : Nat -> Attribute [ctor gather (&)] .
@@ -85,6 +86,7 @@ mod COOKIE-WRAPPER is
     --- Extra message stuff.
     op (to_,connect from_) : WrappedServerId WrappedClientId -> Msg [ctor msg] .
     op (to_,accept with _ from_) : WrappedClientId Cookie WrappedServerId -> Msg [ctor msg] .
+    op (to_,timeout with _ from_) : WrappedClientId AttributeSet WrappedClientId -> Msg [ctor msg] .
     op msgCookie:_ : Cookie -> Attribute [ctor gather (&)] .
     op clientConf:_ : ClientConf -> Attribute [ctor gather (&)] .
     op serverConf:_ : ServerConf -> Attribute [ctor gather (&)] .
@@ -115,7 +117,7 @@ mod COOKIE-WRAPPER is
     vars N1 N2 N3 : Nat .
     vars L Q COOKIELIST : List .
     vars E1 E2 : ServerCookieElem .
-    var B1 : Bool .
+    vars B1 B2 : Bool .
 
     eq extractWeight((WRAPPEDCLIENTID1, K, N1)) = N1 .
 
@@ -146,13 +148,13 @@ mod COOKIE-WRAPPER is
     rl [client-rcv-connect] : (to WRAPPEDCLIENTID1, accept with K from wrapServerId(SERVERID1)) < WRAPPEDCLIENTID1 : WrappedClient | cookie: CLIENTCOOKIEPAIR, ATTRS1 > =>
         < WRAPPEDCLIENTID1 : WrappedClient | cookie: (SERVERID1, K), ATTRS1 > .
 
-    rl [client-send-new-data] : < wrapClientId(CLIENTID1) : WrappedClient | cookie: (SERVERID1, K), pendingMsg: msgNone, sendMsg: B1, clientConf: (CCONF1 c; (to SERVERID1, ATTRS2 from CLIENTID1)), ATTRS1 > =>
+    rl [client-send-new-data] : < wrapClientId(CLIENTID1) : WrappedClient | cookie: (SERVERID1, K), pendingMsg: msgNone, sendMsg: B1, setTimeout: B2, clientConf: (CCONF1 c; (to SERVERID1, ATTRS2 from CLIENTID1)), ATTRS1 > =>
         (to wrapServerId(SERVERID1), (ATTRS2, msgCookie: K) from wrapClientId(CLIENTID1)) 
-        < wrapClientId(CLIENTID1) : WrappedClient | cookie: (SERVERID1, K), clientConf: CCONF1, pendingMsg: (to SERVERID1, ATTRS2 from CLIENTID1), sendMsg: false, ATTRS1 > .
+        < wrapClientId(CLIENTID1) : WrappedClient | cookie: (SERVERID1, K), clientConf: CCONF1, pendingMsg: (to SERVERID1, ATTRS2 from CLIENTID1), sendMsg: false, setTimeout: true, ATTRS1 > .
 
-    rl [client-send-pending-data] : < wrapClientId(CLIENTID1) : WrappedClient | cookie: (SERVERID1, K), pendingMsg: (to SERVERID1, ATTRS2 from CLIENTID1), sendMsg: true, ATTRS1 > =>
+    rl [client-send-pending-data] : < wrapClientId(CLIENTID1) : WrappedClient | cookie: (SERVERID1, K), pendingMsg: (to SERVERID1, ATTRS2 from CLIENTID1), sendMsg: true, setTimeout: B1, ATTRS1 > =>
         (to wrapServerId(SERVERID1), (ATTRS2, msgCookie: K) from wrapClientId(CLIENTID1)) 
-        < wrapClientId(CLIENTID1) : WrappedClient | cookie: (SERVERID1, K), pendingMsg: (to SERVERID1, ATTRS2 from CLIENTID1), sendMsg: false, ATTRS1 > .
+        < wrapClientId(CLIENTID1) : WrappedClient | cookie: (SERVERID1, K), pendingMsg: (to SERVERID1, ATTRS2 from CLIENTID1), sendMsg: false, setTimeout: true, ATTRS1 > .
 
     --- Passes any message to the internal client (does not filter old ones) but clears pendingMsg if this is a response with the awaited sequence number.
     rl [client-rcv-data] : (to wrapClientId(CLIENTID1), (msgSeq: N1, ATTRS2) from wrapServerId(SERVERID1)) < wrapClientId(CLIENTID1) : WrappedClient | cookie: CLIENTCOOKIEPAIR, pendingMsg: MSG1, clientConf: CCONF1, ATTRS1 > => 
@@ -164,11 +166,27 @@ mod COOKIE-WRAPPER is
                 cookie: CLIENTCOOKIEPAIR,
                 pendingMsg: MSG1
             fi),
-            clientConf: ((to CLIENTID1, (msgSeq: N1, ATTRS2) from SERVERID1) c; CCONF1), 
+            clientConf: ((to CLIENTID1, (msgSeq: N1, ATTRS2) from SERVERID1) c; CCONF1),
             ATTRS1 > .
 
-    --- This rule needs to send another cookie request and set sendMsg: True.
-    --- rl [client-timeout-req] :
+    rl [client-set-timeout] : < wrapClientId(CLIENTID1) : WrappedClient | pendingMsg: (to SERVERID1, (msgSeq: N1, ATTRS2) from CLIENTID1), setTimeout: true, ATTRS1 > =>
+        (to wrapClientId(CLIENTID1),timeout with (msgSeq: N1) from wrapClientId(CLIENTID1))
+        < wrapClientId(CLIENTID1) : WrappedClient | pendingMsg: (to SERVERID1, (msgSeq: N1, ATTRS2) from CLIENTID1), setTimeout: false, ATTRS1 > .
+
+    --- Matches timeout messages when we have a pending message. Discards the timeout if it is for an old message.
+    rl [client-rcv-timeout-1] : (to wrapClientId(CLIENTID1),timeout with (msgSeq: N1) from wrapClientId(CLIENTID1))
+        < wrapClientId(CLIENTID1) : WrappedClient | pendingMsg: (to SERVERID1, (msgSeq: N2, ATTRS2) from CLIENTID1), sendMsg: B1, cookie: CLIENTCOOKIEPAIR, ATTRS1 > =>
+            if N1 == N2 then
+                (to wrapServerId(SERVERID1), connect from wrapClientId(CLIENTID1)) 
+                < wrapClientId(CLIENTID1) : WrappedClient | pendingMsg: (to SERVERID1, (msgSeq: N2, ATTRS2) from CLIENTID1), sendMsg: true, cookie: cookieNone, ATTRS1 >
+            else
+                < wrapClientId(CLIENTID1) : WrappedClient | pendingMsg: (to SERVERID1, (msgSeq: N2, ATTRS2) from CLIENTID1), sendMsg: B1, cookie: CLIENTCOOKIEPAIR, ATTRS1 >
+            fi .
+    
+    --- Rule for when we get a stale timeout while having no pending messages.
+    rl [client-rcv-timeout-2] : (to wrapClientId(CLIENTID1),timeout with (msgSeq: N1) from wrapClientId(CLIENTID1))
+        < wrapClientId(CLIENTID1) : WrappedClient | pendingMsg: msgNone, ATTRS1 > =>
+            < wrapClientId(CLIENTID1) : WrappedClient | pendingMsg: msgNone, ATTRS1 > .
 
     rl [server-rcv-connect-req] : (to WRAPPEDSERVERID1, connect from WRAPPEDCLIENTID1) < WRAPPEDSERVERID1 : WrappedServer | storedCookies: COOKIELIST, maxCookies: N1, seed: N2, ATTRS1 > => 
         (to WRAPPEDCLIENTID1, accept with natToCookie(N2) from WRAPPEDSERVERID1)
@@ -190,9 +208,6 @@ mod COOKIE-WRAPPER is
             fi
         fi .
 
-    --- rl [server-rcv-finish-req] : (to WRAPPEDSERVERID1, (msgCookie: K, disconnect, ATTRS2) from WRAPPEDCLIENTID1) < WRAPPEDSERVERID1 : WrappedServer | storedCookies: COOKIELIST, ATTRS1 > =>
-    ---     < WRAPPEDSERVERID1 : WrappedServer | storedCookies: delCookieElem(WRAPPEDCLIENTID1, K, COOKIELIST), ATTRS1 > .
-
     rl [server-send-data] : < WRAPPEDSERVERID1 : WrappedServer | serverConf: ((to CLIENTID1, ATTRS1 from SERVERID1) s; SCONF1), ATTRS2 > =>
         (to wrapClientId(CLIENTID1), ATTRS1 from wrapServerId(SERVERID1))
         < WRAPPEDSERVERID1 : WrappedServer | serverConf: SCONF1, ATTRS2 > .
@@ -207,19 +222,19 @@ endm
 --- frewrite < wrapClientId(C 1) : WrappedClient | cookie: (S 1, natToCookie(5)), clientConf: C< C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 3 > > .
 
 --- Test one client, one server.
-frewrite < wrapClientId(C 1) : WrappedClient | cookie: cookieNone, pendingMsg: msgNone, sendMsg: false, clientConf: C< C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 3 > > 
+frewrite < wrapClientId(C 1) : WrappedClient | cookie: cookieNone, pendingMsg: msgNone, sendMsg: false, setTimeout: false, clientConf: C< C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 3 > > 
 < wrapServerId(S 1) : WrappedServer | storedCookies: nil, maxCookies: 1, seed: 42, serverConf: S< S 1 : Server | none > > .
 
 --- Test two clients, one server, enough cookies for both.
-frewrite < wrapClientId(C 1) : WrappedClient | cookie: cookieNone, pendingMsg: msgNone, sendMsg: false, clientConf: C< C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 3 > > 
-    < wrapClientId(C 2) : WrappedClient | cookie: cookieNone, pendingMsg: msgNone, sendMsg: false, clientConf: C< C 2 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 10 > > 
+frewrite < wrapClientId(C 1) : WrappedClient | cookie: cookieNone, pendingMsg: msgNone, sendMsg: false, setTimeout: false, clientConf: C< C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 3 > > 
+    < wrapClientId(C 2) : WrappedClient | cookie: cookieNone, pendingMsg: msgNone, sendMsg: false, setTimeout: false, clientConf: C< C 2 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 10 > > 
     < wrapServerId(S 1) : WrappedServer | storedCookies: nil, maxCookies: 2, seed: 42, serverConf: S< S 1 : Server | none > > .
 
 --- Verify that no weird end states occur for one client and one server.
-search < wrapClientId(C 1) : WrappedClient | cookie: cookieNone, pendingMsg: msgNone, sendMsg: false, clientConf: C< C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 3 > > 
-    < wrapServerId(S 1) : WrappedServer | storedCookies: nil, maxCookies: 1, seed: 42, serverConf: S< S 1 : Server | none > >
-        =>! < wrapClientId(C 1) : WrappedClient | cookie: CLIENTCOOKIEPAIR, pendingMsg: MSG1, clientConf: C< C 1 : Client | server: S 1, seq: N1, ack: N2, ATTRS1 > > C:Configuration 
-            s.t. (MSG1 =/= msgNone) or (N1 =/= 4) or (N2 =/= 4) or (CLIENTCOOKIEPAIR =/= cookieNone) .
+--- search < wrapClientId(C 1) : WrappedClient | cookie: cookieNone, pendingMsg: msgNone, sendMsg: false, setTimeout: false, clientConf: C< C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 3 > > 
+---     < wrapServerId(S 1) : WrappedServer | storedCookies: nil, maxCookies: 1, seed: 42, serverConf: S< S 1 : Server | none > >
+---         =>! < wrapClientId(C 1) : WrappedClient | cookie: CLIENTCOOKIEPAIR, pendingMsg: MSG1, clientConf: C< C 1 : Client | server: S 1, seq: N1, ack: N2, ATTRS1 > > C:Configuration 
+---             s.t. (MSG1 =/= msgNone) or (N1 =/= 4) or (N2 =/= 4) or (CLIENTCOOKIEPAIR =/= cookieNone) .
 
 --- TODO:
 --- Is there a better way to produce cookies?
