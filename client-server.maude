@@ -1,3 +1,9 @@
+--- This is our core client server protocol. We are currently only modeling each client 
+--- communicating with a single server. Clients send a sequence of data request messages 
+--- of a predefined length to the server, waiting for a response between each one.
+--- The client also sends a final disconnect message and waits for a response before
+--- being truly done.
+--- This is loosely modeled after a somewhat unidirectional TCP with the seq and ack.
 mod CLIENT-SERVER is
     protecting NAT .
     extending CONFIGURATION .
@@ -55,6 +61,11 @@ mod CLIENT-SERVER is
     rl [server-reply] : (to SERVERID1, ATTRS1 from CLIENTID1) s; S< SERVERID1 : Server | ATTRS2 > => (to CLIENTID1, ATTRS1 from SERVERID1) s; S< SERVERID1 : Server | ATTRS2 > .
 endm
 
+--- The underlying protocol purely wants to send and receive messages. This module is a wrapper
+--- handling the DoS protection protocol so that the underlying protocol does not have to worry
+--- about it. Here, we deal with sending connection requests for cookies and retries for the
+--- client and responding to cookie requests and validating data (core protocol) requests
+--- for the server.
 mod COOKIE-WRAPPER is
     protecting CLIENT-SERVER .
 
@@ -62,15 +73,14 @@ mod COOKIE-WRAPPER is
     sorts NeList List ServerCookieElem .
     subsort ServerCookieElem < NeList < List .
     subsorts WrappedClientId WrappedServerId < Oid .
-    --- sorts WrappedClient WrappedServer .
-    --- subsorts WrappedClient WrappedServer < Object .
     subsort Cookie < Nat .
 
     ops WrappedClient WrappedServer : -> Cid [ctor] .
     op wrapClientId : ClientId -> WrappedClientId .
     op wrapServerId : ServerId -> WrappedServerId .
     op (_,_) : ServerId Cookie -> CStoredCookiePair [ctor] .
-    op cookieNone : -> CStoredCookiePair [ctor] .
+    op cookieNone : -> CStoredCookiePair [ctor] . *** A pair of client and cookie.
+    op noCookie : -> Cookie [ctor] . *** Bad naming, just the cookie.
     op msgNone : -> Msg [ctor] . *** Does this incorrectly get treated as a real message to deliver?
     op natToCookie : Nat -> Cookie [ctor] .
 
@@ -100,6 +110,7 @@ mod COOKIE-WRAPPER is
     op sortedInsert : ServerCookieElem List -> NeList .
     op extractWeight : ServerCookieElem -> Nat .
     op _ _ in _ : WrappedClientId Cookie List -> Bool .
+    op _ cIn _ : WrappedClientId List -> Cookie .
     op incWeight : WrappedClientId Cookie List -> List .
     op delCookieElem : WrappedClientId Cookie List -> List .
     op popMin : List -> List .
@@ -130,6 +141,9 @@ mod COOKIE-WRAPPER is
     eq WRAPPEDCLIENTID1 K in nil = false .
     eq WRAPPEDCLIENTID1 K in (WRAPPEDCLIENTID2, K1, N1) ; L = if (WRAPPEDCLIENTID1 == WRAPPEDCLIENTID2) and (K == K1) then true else WRAPPEDCLIENTID1 K in L fi .
 
+    eq WRAPPEDCLIENTID1 cIn nil = noCookie .
+    eq WRAPPEDCLIENTID1 cIn (WRAPPEDCLIENTID2, K1, N1) ; L = if (WRAPPEDCLIENTID1 == WRAPPEDCLIENTID2) then K1 else WRAPPEDCLIENTID1 cIn L fi .
+
     eq incWeight(WRAPPEDCLIENTID1, K, nil) = nil .
     --- Takes advantage of the list already being sorted to remove the element and reinsert it without two extra full passes.
     eq incWeight(WRAPPEDCLIENTID1, K, (WRAPPEDCLIENTID2, K1, N1) ; L) = if (WRAPPEDCLIENTID1 == WRAPPEDCLIENTID2) and (K == K1) then sortedInsert((WRAPPEDCLIENTID2, K1, s(N1)), L) else (WRAPPEDCLIENTID2, K1, N1) ; incWeight(WRAPPEDCLIENTID1, K, L) fi .
@@ -141,6 +155,7 @@ mod COOKIE-WRAPPER is
     eq popMin(nil) = nil .
     eq popMin(E1 ; L) = L .
 
+    --- Handles connect request when the underlying client protocol wants to send a new message. Asks server for a cookie.
     rl [client-send-new-connect] : < wrapClientId(CLIENTID1) : WrappedClient | cookie: cookieNone, pendingMsg: msgNone, sendMsg: B1, clientConf: (CCONF1 c; (to SERVERID1, ATTRS2 from CLIENTID1)), ATTRS1 > =>
         (to wrapServerId(SERVERID1), connect from wrapClientId(CLIENTID1)) 
         < wrapClientId(CLIENTID1) : WrappedClient | cookie: cookieNone, clientConf: CCONF1, pendingMsg: (to SERVERID1, ATTRS2 from CLIENTID1), sendMsg: true, ATTRS1 > .
@@ -148,10 +163,12 @@ mod COOKIE-WRAPPER is
     rl [client-rcv-connect] : (to WRAPPEDCLIENTID1, accept with K from wrapServerId(SERVERID1)) < WRAPPEDCLIENTID1 : WrappedClient | cookie: CLIENTCOOKIEPAIR, ATTRS1 > =>
         < WRAPPEDCLIENTID1 : WrappedClient | cookie: (SERVERID1, K), ATTRS1 > .
 
+    --- Handles sending data request when the underlying client wants to a new message and we already have a cookie.
     rl [client-send-new-data] : < wrapClientId(CLIENTID1) : WrappedClient | cookie: (SERVERID1, K), pendingMsg: msgNone, sendMsg: B1, setTimeout: B2, clientConf: (CCONF1 c; (to SERVERID1, ATTRS2 from CLIENTID1)), ATTRS1 > =>
         (to wrapServerId(SERVERID1), (ATTRS2, msgCookie: K) from wrapClientId(CLIENTID1)) 
         < wrapClientId(CLIENTID1) : WrappedClient | cookie: (SERVERID1, K), clientConf: CCONF1, pendingMsg: (to SERVERID1, ATTRS2 from CLIENTID1), sendMsg: false, setTimeout: true, ATTRS1 > .
 
+    --- When sendMsg is true and we have a pending message, this rule will send it once we have a cookie.
     rl [client-send-pending-data] : < wrapClientId(CLIENTID1) : WrappedClient | cookie: (SERVERID1, K), pendingMsg: (to SERVERID1, ATTRS2 from CLIENTID1), sendMsg: true, setTimeout: B1, ATTRS1 > =>
         (to wrapServerId(SERVERID1), (ATTRS2, msgCookie: K) from wrapClientId(CLIENTID1)) 
         < wrapClientId(CLIENTID1) : WrappedClient | cookie: (SERVERID1, K), pendingMsg: (to SERVERID1, ATTRS2 from CLIENTID1), sendMsg: false, setTimeout: true, ATTRS1 > .
@@ -169,11 +186,14 @@ mod COOKIE-WRAPPER is
             clientConf: ((to CLIENTID1, (msgSeq: N1, ATTRS2) from SERVERID1) c; CCONF1),
             ATTRS1 > .
 
+    --- Sents a timeout message back to itself when setTimeout is true.
     rl [client-set-timeout] : < wrapClientId(CLIENTID1) : WrappedClient | pendingMsg: (to SERVERID1, (msgSeq: N1, ATTRS2) from CLIENTID1), setTimeout: true, ATTRS1 > =>
         (to wrapClientId(CLIENTID1),timeout with (msgSeq: N1) from wrapClientId(CLIENTID1))
         < wrapClientId(CLIENTID1) : WrappedClient | pendingMsg: (to SERVERID1, (msgSeq: N1, ATTRS2) from CLIENTID1), setTimeout: false, ATTRS1 > .
 
     --- Matches timeout messages when we have a pending message. Discards the timeout if it is for an old message.
+    --- A message is not removed from pending until its corresponding response is received to allow for the server
+    --- dropping messages.
     rl [client-rcv-timeout-1] : (to wrapClientId(CLIENTID1),timeout with (msgSeq: N1) from wrapClientId(CLIENTID1))
         < wrapClientId(CLIENTID1) : WrappedClient | pendingMsg: (to SERVERID1, (msgSeq: N2, ATTRS2) from CLIENTID1), sendMsg: B1, cookie: CLIENTCOOKIEPAIR, ATTRS1 > =>
             if N1 == N2 then
@@ -188,12 +208,21 @@ mod COOKIE-WRAPPER is
         < wrapClientId(CLIENTID1) : WrappedClient | pendingMsg: msgNone, ATTRS1 > =>
             < wrapClientId(CLIENTID1) : WrappedClient | pendingMsg: msgNone, ATTRS1 > .
 
+    --- Always returns a cookie for each request. However, the server has a limited capacity for cookies
+    --- and will make room if necessary by removing the cookie with the lowest weight (weight is incremented for each
+    --- successful data request).
     rl [server-rcv-connect-req] : (to WRAPPEDSERVERID1, connect from WRAPPEDCLIENTID1) < WRAPPEDSERVERID1 : WrappedServer | storedCookies: COOKIELIST, maxCookies: N1, seed: N2, ATTRS1 > => 
-        (to WRAPPEDCLIENTID1, accept with natToCookie(N2) from WRAPPEDSERVERID1)
-        if len(COOKIELIST) >= N1 then
-            < WRAPPEDSERVERID1 : WrappedServer | storedCookies: sortedInsert((WRAPPEDCLIENTID1, natToCookie(N2), 1), popMin(COOKIELIST)), maxCookies: N1, seed: s(N2), ATTRS1 >
+        *** Handles spurious request where server already has cookie for client. Returns existing cookie.
+        if WRAPPEDCLIENTID1 cIn COOKIELIST =/= noCookie then 
+            (to WRAPPEDCLIENTID1, accept with (WRAPPEDCLIENTID1 cIn COOKIELIST) from WRAPPEDSERVERID1)
+            < WRAPPEDSERVERID1 : WrappedServer | storedCookies: COOKIELIST, maxCookies: N1, seed: N2, ATTRS1 >
         else
-            < WRAPPEDSERVERID1 : WrappedServer | storedCookies: sortedInsert((WRAPPEDCLIENTID1, natToCookie(N2), 1), COOKIELIST), maxCookies: N1, seed: s(N2), ATTRS1 >
+            (to WRAPPEDCLIENTID1, accept with natToCookie(N2) from WRAPPEDSERVERID1)
+            if len(COOKIELIST) >= N1 then
+                < WRAPPEDSERVERID1 : WrappedServer | storedCookies: sortedInsert((WRAPPEDCLIENTID1, natToCookie(N2), 1), popMin(COOKIELIST)), maxCookies: N1, seed: s(N2), ATTRS1 >
+            else
+                < WRAPPEDSERVERID1 : WrappedServer | storedCookies: sortedInsert((WRAPPEDCLIENTID1, natToCookie(N2), 1), COOKIELIST), maxCookies: N1, seed: s(N2), ATTRS1 >
+            fi
         fi .
 
     --- Handles disconnect messages too because this pattern will match against them anyway.
@@ -215,11 +244,6 @@ endm
 
 --- set trace on .
 --- set trace eq off .
---- frewrite < C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 3 > < S 1 : Server | none > .
---- frewrite < C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 1 > < C 2 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 4 > < S 1 : Server | none > .
-
---- frewrite < wrapClientId(C 1) : WrappedClient | cookie: cookieNone, clientConf: C< C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 3 > > .
---- frewrite < wrapClientId(C 1) : WrappedClient | cookie: (S 1, natToCookie(5)), clientConf: C< C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 3 > > .
 
 --- Test one client, one server.
 frewrite < wrapClientId(C 1) : WrappedClient | cookie: cookieNone, pendingMsg: msgNone, sendMsg: false, setTimeout: false, clientConf: C< C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 3 > > 
@@ -245,3 +269,6 @@ frewrite < wrapClientId(C 1) : WrappedClient | cookie: cookieNone, pendingMsg: m
 --- red len((wrapClientId(C 2), natToCookie(43), 1) . (wrapClientId(C 3), natToCookie(44), 6) . nil) .
 
 --- red incWeight(wrapClientId(C 1), natToCookie(42), (wrapClientId(C 1), natToCookie(42), 1) ; ((wrapClientId(C 3), natToCookie(44), 1) ; (wrapClientId(C 2), natToCookie(43), 4))) .
+
+--- red wrapClientId(C 3) cIn ((wrapClientId(C 1), natToCookie(42), 1) ; ((wrapClientId(C 3), natToCookie(44), 1) ; (wrapClientId(C 2), natToCookie(43), 4))) .
+--- red wrapClientId(C 10) cIn ((wrapClientId(C 1), natToCookie(42), 1) ; ((wrapClientId(C 3), natToCookie(44), 1) ; (wrapClientId(C 2), natToCookie(43), 4))) .
