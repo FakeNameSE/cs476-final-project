@@ -69,13 +69,14 @@ endm
 mod COOKIE-WRAPPER is
     protecting CLIENT-SERVER .
 
-    sorts CStoredCookiePair Cookie WrappedClientId WrappedServerId .
+    sorts CStoredCookiePair Cookie WrappedClientId WrappedServerId MaliciousWrappedClientId .
     sorts NeList List ServerCookieElem .
     subsort ServerCookieElem < NeList < List .
     subsorts WrappedClientId WrappedServerId < Oid .
+    subsort MaliciousWrappedClientId < WrappedClientId .
     subsort Cookie < Nat .
 
-    ops WrappedClient WrappedServer : -> Cid [ctor] .
+    ops WrappedClient WrappedServer Attacker : -> Cid [ctor] .
     op wrapClientId : ClientId -> WrappedClientId .
     op wrapServerId : ServerId -> WrappedServerId .
     op (_,_) : ServerId Cookie -> CStoredCookiePair [ctor] .
@@ -92,6 +93,10 @@ mod COOKIE-WRAPPER is
 
     op storedCookies:_ : List -> Attribute [ctor gather (&)] .
     op maxCookies:_ : Nat -> Attribute [ctor gather (&)] .
+    
+    --- Attacker
+    op A_ : Nat -> MaliciousWrappedClientId [ctor] .
+    op msgsRemaining:_ : Nat -> Attribute [ctor gather (&)] .
 
     --- Extra message stuff.
     op (to_,connect from_) : WrappedServerId WrappedClientId -> Msg [ctor msg] .
@@ -117,7 +122,8 @@ mod COOKIE-WRAPPER is
 
     var CLIENTID1 : ClientId .
     var SERVERID1 : ServerId .
-    var WRAPPEDCLIENTID1 WRAPPEDCLIENTID2 : WrappedClientId .
+    vars WRAPPEDCLIENTID1 WRAPPEDCLIENTID2 : WrappedClientId .
+    var ATTACKERID : MaliciousWrappedClientId .
     var WRAPPEDSERVERID1 : WrappedServerId .
     var CCONF1 : ClientConf .
     var SCONF1 : ServerConf .
@@ -211,7 +217,7 @@ mod COOKIE-WRAPPER is
     --- Always returns a cookie for each request. However, the server has a limited capacity for cookies
     --- and will make room if necessary by removing the cookie with the lowest weight (weight is incremented for each
     --- successful data request).
-    rl [server-rcv-connect-req] : (to WRAPPEDSERVERID1, connect from WRAPPEDCLIENTID1) < WRAPPEDSERVERID1 : WrappedServer | storedCookies: COOKIELIST, maxCookies: N1, seed: N2, ATTRS1 > => 
+    crl [server-rcv-connect-req-client] : (to WRAPPEDSERVERID1, connect from WRAPPEDCLIENTID1) < WRAPPEDSERVERID1 : WrappedServer | storedCookies: COOKIELIST, maxCookies: N1, seed: N2, ATTRS1 > => 
         *** Handles spurious request where server already has cookie for client. Returns existing cookie.
         if WRAPPEDCLIENTID1 cIn COOKIELIST =/= noCookie then 
             (to WRAPPEDCLIENTID1, accept with (WRAPPEDCLIENTID1 cIn COOKIELIST) from WRAPPEDSERVERID1)
@@ -223,7 +229,22 @@ mod COOKIE-WRAPPER is
             else
                 < WRAPPEDSERVERID1 : WrappedServer | storedCookies: sortedInsert((WRAPPEDCLIENTID1, natToCookie(N2), 1), COOKIELIST), maxCookies: N1, seed: s(N2), ATTRS1 >
             fi
-        fi .
+        fi if not WRAPPEDCLIENTID1 :: MaliciousWrappedClientId .
+
+    --- Variant for handling messages from attacker. Because Actors2PMaude requires that messages cannot be directed to non-existent objects but the attacker
+    --- needs to forge its messages' from ID to take up more than one slot in the server cookie table, we model this on the server side by just updating
+    --- the cookie table but not actually sending a response message for attacker connect requests. 
+    crl [server-rcv-connect-req-attacker] : (to WRAPPEDSERVERID1, connect from WRAPPEDCLIENTID1) < WRAPPEDSERVERID1 : WrappedServer | storedCookies: COOKIELIST, maxCookies: N1, seed: N2, ATTRS1 > => 
+        *** Handles spurious request where server already has cookie for client.
+        if WRAPPEDCLIENTID1 cIn COOKIELIST =/= noCookie then 
+            < WRAPPEDSERVERID1 : WrappedServer | storedCookies: COOKIELIST, maxCookies: N1, seed: N2, ATTRS1 >
+        else
+            if len(COOKIELIST) >= N1 then
+                < WRAPPEDSERVERID1 : WrappedServer | storedCookies: sortedInsert((WRAPPEDCLIENTID1, natToCookie(N2), 1), popMin(COOKIELIST)), maxCookies: N1, seed: s(N2), ATTRS1 >
+            else
+                < WRAPPEDSERVERID1 : WrappedServer | storedCookies: sortedInsert((WRAPPEDCLIENTID1, natToCookie(N2), 1), COOKIELIST), maxCookies: N1, seed: s(N2), ATTRS1 >
+            fi
+        fi if WRAPPEDCLIENTID1 :: MaliciousWrappedClientId .
 
     --- Handles disconnect messages too because this pattern will match against them anyway.
     rl [server-rcv-data-req] : (to wrapServerId(SERVERID1), (msgCookie: K, ATTRS2) from wrapClientId(CLIENTID1)) < wrapServerId(SERVERID1) : WrappedServer | storedCookies: COOKIELIST, serverConf: SCONF1, ATTRS1 > =>
@@ -240,6 +261,26 @@ mod COOKIE-WRAPPER is
     rl [server-send-data] : < WRAPPEDSERVERID1 : WrappedServer | serverConf: ((to CLIENTID1, ATTRS1 from SERVERID1) s; SCONF1), ATTRS2 > =>
         (to wrapClientId(CLIENTID1), ATTRS1 from wrapServerId(SERVERID1))
         < WRAPPEDSERVERID1 : WrappedServer | serverConf: SCONF1, ATTRS2 > .
+
+
+    --- Sends a new connection request and then prepares attacker to set a timeout for the next one.
+    rl [attacker-send-req] : < ATTACKERID : Attacker | sendMsg: true, setTimeout: B1, server: SERVERID1, msgsRemaining: s(N1), ATTRS1 > =>
+        (to wrapServerId(SERVERID1), connect from A(s(N1)))
+        < ATTACKERID : Attacker | sendMsg: false, setTimeout: true, server: SERVERID1, msgsRemaining: N1, ATTRS1 > .
+
+    --- Ignore server responses.
+    rl [attacker-rcv] : (to ATTACKERID, accept with K from wrapServerId(SERVERID1)) < ATTACKERID : Attacker | ATTRS1 > =>
+        < ATTACKERID : Attacker | ATTRS1 > .
+
+    rl [attacker-set-timeout] : < ATTACKERID : Attacker | setTimeout: true, ATTRS1 > =>
+        (to ATTACKERID,timeout with none from ATTACKERID)
+        < ATTACKERID : Attacker | setTimeout: false, ATTRS1 > .
+    
+    rl [attacker-rcv-timeout] : (to ATTACKERID,timeout with none from ATTACKERID) < ATTACKERID : Attacker | sendMsg: B1, ATTRS1 > =>
+        < ATTACKERID : Attacker | sendMsg: true, ATTRS1 > .
+    --- Attacker sends request.
+    --- Ignores response
+    --- Sends timeout to send another request
 endm
 
 --- set trace on .
@@ -253,6 +294,9 @@ frewrite < wrapClientId(C 1) : WrappedClient | cookie: cookieNone, pendingMsg: m
 frewrite < wrapClientId(C 1) : WrappedClient | cookie: cookieNone, pendingMsg: msgNone, sendMsg: false, setTimeout: false, clientConf: C< C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 3 > > 
     < wrapClientId(C 2) : WrappedClient | cookie: cookieNone, pendingMsg: msgNone, sendMsg: false, setTimeout: false, clientConf: C< C 2 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 10 > > 
     < wrapServerId(S 1) : WrappedServer | storedCookies: nil, maxCookies: 2, seed: 42, serverConf: S< S 1 : Server | none > > .
+
+frewrite < A 1 : Attacker | sendMsg: true, setTimeout: false, server: S 1, msgsRemaining: 3, ATTRS1 >
+< wrapServerId(S 1) : WrappedServer | storedCookies: nil, maxCookies: 4, seed: 42, serverConf: S< S 1 : Server | none > > .
 
 --- Verify that no weird end states occur for one client and one server.
 --- search < wrapClientId(C 1) : WrappedClient | cookie: cookieNone, pendingMsg: msgNone, sendMsg: false, setTimeout: false, clientConf: C< C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 3 > > 
