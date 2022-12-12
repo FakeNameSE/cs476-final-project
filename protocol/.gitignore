@@ -1,0 +1,7 @@
+*.java
+*.class
+*.txt
+__pycache__
+p-output
+m-output
+*.pyc

@@ -1,0 +1,17 @@
+load ../events
+load protocol
+
+mod EVENTS-PROTOCOL is 
+  inc EVENTS + OBJS .
+  
+  *** user-specified interesting events 
+  ops cookieRequestEvent dataRequestEvent : -> Event [ctor] .
+  --- ops startQuery endQuery : Id -> Event [ctor] .
+
+  --- var ID : Id .
+  
+  *** rule-specific mapping
+  eq eventMap = ['client-send-new-connect, cookieRequestEvent] ;; 
+    ['client-rcv-timeout-1, cookieRequestEvent] ;; 
+    ['client-send-new-data, dataRequestEvent] [nonexec] .
+endm

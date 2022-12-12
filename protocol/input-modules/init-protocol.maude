@@ -1,0 +1,13 @@
+load protocol
+
+mod INIT-PROTOCOL is
+  inc PROTOCOL .
+   
+  op initconf : -> Config .
+  eq initconf = 
+    --- < A 1 : Attacker | sendMsg: true, setTimeout: false, server: S 1, msgsRemaining: 100 >
+    < wrapClientId(C 1) : WrappedClient | cookie: cookieNone, pendingMsg: msgNone, sendMsg: false, setTimeout: false, clientConf: C< C 1 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 5 > > 
+    --- < wrapClientId(C 2) : WrappedClient | cookie: cookieNone, pendingMsg: msgNone, sendMsg: false, setTimeout: false, clientConf: C< C 2 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 10 > > 
+    --- < wrapClientId(C 3) : WrappedClient | cookie: cookieNone, pendingMsg: msgNone, sendMsg: false, setTimeout: false, clientConf: C< C 3 : Client | server: S 1, seq: 0, ack: 0, maxSeq: 15 > > 
+    < wrapServerId(S 1) : WrappedServer | storedCookies: nil, maxCookies: 10, seed: 42, serverConf: S< S 1 : Server | mt > > .
+endm

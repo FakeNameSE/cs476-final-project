@@ -1,0 +1,2 @@
+CookieRatio() = { s.rval(1) } ;
+eval E[ # CookieRatio() ] ; 
